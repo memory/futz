@@ -95,9 +95,9 @@ def count_peers(party_size, my_position):
 
 
 def get_work(party_size, my_position):
-    # fast exit if there are 1 or >120 workers
-    if my_position > 120:
-        logging.fatal('There are already 120 clients, exiting')
+    # fast exit if there are 1 or >60 workers
+    if my_position > 60:
+        logging.fatal('There are already 60 clients, exiting')
         sys.exit(0)
     elif party_size == 1:
         logging.warning('only one client in the pool, taking all comers')
