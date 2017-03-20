@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: futz-server
+spec:
+  # this replicas value is default
+  # modify it according to your case
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: talamasca
+        tier: frontend
+    spec:
+      containers:
+      - name: talamasca
+        image: memory/futz-server:latest
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        env:
+        - name: GET_HOSTS_FROM
+          value: dns
+          # If your cluster config does not include a dns service, then to
+          # instead access environment variables to find service host
+          # info, comment out the 'value: dns' line above, and uncomment the
+          # line below.
+          # value: env
+        ports:
+        - containerPort: 80

@@ -20,9 +20,10 @@ PREFIX = '/talamasca'
 # this always starts at lost
 PREV_STATE = KazooState.LOST
 
-REDIS = {0: redis.StrictRedis(host='localhost', port=6379, db=0),
-         1: redis.StrictRedis(host='localhost', port=6380, db=0)}
+REDIS = {0: redis.StrictRedis(host='redis-even', port=6379, db=0),
+         1: redis.StrictRedis(host='redis-odd', port=6379, db=0)}
 
+ZK_HOSTS = ['zookeeper:2181']
 # 60 lists, 0-59, on each server
 LISTS = range(60)
 # give me a unique Id
@@ -133,7 +134,7 @@ def summarize_me(signum, frame):
     signal.alarm(1)
 
 
-zk = KazooClient(hosts='127.0.0.1:2181')
+zk = KazooClient(hosts=ZK_HOSTS)
 zk.start()
 zk.add_listener(zk_state)
 zk.ensure_path(PREFIX)

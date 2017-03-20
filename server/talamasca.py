@@ -7,12 +7,39 @@ import redis
 
 import datetime
 import os
+import time
 
 app = Flask(__name__)
 api = Api(app)
 
-even_redis = redis.StrictRedis(host='localhost', port=6379, db=0)
-odd_redis = redis.StrictRedis(host='localhost', port=6380, db=0)
+REDIS = {
+    'even': redis.StrictRedis(host='redis-even', port=6379, db=0),
+    'odd': redis.StrictRedis(host='redis-odd', port=6379, db=0)
+}
+
+MAX_RETRIES = 3
+MIN_DELAY = 1  # seconds
+DELAY_FACTOR = 2
+
+
+def backoff(func, *args, **kwargs):
+    delay = kwargs.get('delay', 1)
+    attempt = kwargs.get('attempt', 1)
+    if attempt > MAX_RETRIES:
+        api.abort(500)
+    try:
+        app.logger.error('*** attempt: %d\n' % attempt)
+        func(args)
+        return
+    except Exception as ex:
+        # TODO: if this were a real app, we'd probably try to
+        # vary our approach based on the exception.
+        app.logger.error(ex.message)
+        app.logger.error(
+            '*** backing off %d seconds\n' % delay)
+        time.sleep(delay)
+        delay = delay * DELAY_FACTOR
+        backoff(func, args, delay=delay, attempt=attempt+1)
 
 
 @api.route('/ingest')
@@ -23,16 +50,16 @@ class Ingest(Resource):
         ms = now.microsecond / 1000.0
         if sec % 2:
             parity = 'odd'
-            odd_redis.lpush(sec, ms)
         else:
             parity = 'even'
-            even_redis.lpush(sec, ms)
+        backoff(REDIS[parity].lpush, sec, ms)
         return {'parity': parity,
                 'sec': sec,
                 'ms': ms,
                 'we watch': 'and we are always there'}
 
 if __name__ == '__main__':
-    app.run(debug=os.environ.get('DEBUG', False),
-            port=os.environ.get('PORT', 8080),
+    app.run(debug=True if 'DEBUG' in os.environ else False,
+            host='0.0.0.0',
+            port=int(os.environ.get('PORT', 80)),
             threaded=True)

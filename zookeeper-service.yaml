@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  labels:
+    app: zookeeper
+    role: zookeeper
+    tier: backend
+spec:
+  ports:
+    # the port that this service should serve on
+  - port: 2181
+    targetPort: 2181
+  selector:
+    app: zookeeper
+    role: zookeeper
+    tier: backend

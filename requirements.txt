@@ -1,3 +1,0 @@
-flask-restplus
-kazoo
-redis

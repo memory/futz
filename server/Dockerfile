@@ -12,5 +12,5 @@ RUN virtualenv /futz
 ADD requirements.txt /futz
 ADD talamasca.py /futz/bin/talamasca.py
 RUN /futz/bin/pip install -r /futz/requirements.txt
-EXPOSE 8080
+EXPOSE 80
 CMD ["/futz/bin/python", "/futz/bin/talamasca.py"]
