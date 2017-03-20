@@ -28,17 +28,16 @@ def backoff(func, *args, **kwargs):
     if attempt > MAX_RETRIES:
         api.abort(500)
     try:
-        app.logger.error('*** attempt: %d\n' % attempt)
-        func(args)
+        func(*args)
         return
     except Exception as ex:
         # TODO: if this were a real app, we'd probably try to
         # vary our approach based on the exception.
         app.logger.error(ex.message)
-        app.logger.error(
-            '*** backing off %d seconds\n' % delay)
+        app.logger.error('backing off %d seconds', delay)
         time.sleep(delay)
         delay = delay * DELAY_FACTOR
+        app.logger.error('retry: %d', attempt)
         backoff(func, args, delay=delay, attempt=attempt+1)
 
 

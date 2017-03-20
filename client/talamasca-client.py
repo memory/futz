@@ -23,10 +23,13 @@ PREV_STATE = KazooState.LOST
 REDIS = {0: redis.StrictRedis(host='redis-even', port=6379, db=0),
          1: redis.StrictRedis(host='redis-odd', port=6379, db=0)}
 
-ZK_HOSTS = ['zookeeper:2181']
-# 60 lists, 0-59, on each server
-LISTS = range(60)
-# give me a unique Id
+# the even server will only have the even-numbered lists populated
+# and vice versa
+LISTS = {0: list(xrange(0, 59, 2)),
+         1: list(xrange(1, 60, 2))}
+
+ZK_HOSTS = 'zookeeper:2181'
+# give me a unique Id for the party
 ME = str(uuid.uuid4())
 
 logging.basicConfig(
@@ -41,6 +44,11 @@ def exit_handler(party):
 
 
 def zk_state(state):
+    ''' TODO: if this were more than a toy application, this is
+    where the logic for detecting zookeeper failures
+    and attempting to reconnect would live; in the interests
+    of not spending days on this task we will just exit
+    if we ever lose the connection. '''
     if state == KazooState.LOST:
         if PREV_STATE == KazooState.LOST:
             # lost=>lost == initial startup
@@ -48,12 +56,15 @@ def zk_state(state):
         if PREV_STATE == KazooState.CONNECTED:
             # connected => lost
             logging.warning('zookeeper connection lost')
+            sys.exit(1)
         if PREV_STATE == KazooState.SUSPENDED:
             # suspended => lost
             logging.warning('zookeeper connection lost')
+            sys.exit(1)
     elif state == KazooState.SUSPENDED:
         # Handle being disconnected from Zookeeper
         logging.warning('zookeeper connection suspended')
+        sys.exit(1)
     else:
         # Handle being connected/reconnected to Zookeeper
         logging.info('connected to zookeeper')
@@ -93,26 +104,28 @@ def get_work(party_size, my_position):
         return list(itertools.product(range(2), range(60)))
     my_parity = my_position % 2
     if my_parity:
-        logging.info('targeting odd servers')
+        logging.info('targeting odd server')
         servers = (1,)
     else:
         servers = (0,)
-        logging.info('targeting even servers')
+        logging.info('targeting even server')
     peer_pool_size = count_peers(party_size, my_position)
     logging.info('%d clients with my parity', peer_pool_size)
     peer_pool_position = ((my_position + my_parity) / 2) - 1
-    lists = LISTS[peer_pool_position::peer_pool_size]
-    return list(itertools.product(servers, lists))
+    columns = LISTS[my_parity][peer_pool_position::peer_pool_size]
+    work = list(itertools.product(servers, columns))
+    logging.info('my work: %s', work)
+    return work
 
 
 def compute_averages(targets):
     for server in (0, 1):
         for column in [x[1] for x in targets if x[0] == server]:
-            # don't bother fetching from empty lists
-            if server % 2 == column % 2:
-                pipe = REDIS[server].pipeline(transaction=True)
+            with REDIS[server].pipeline(transaction=True) as pipe:
+                # grab all values
                 pipe.lrange(column, 0, -1)
-                pipe.ltrim(column, -1, 0)
+                # truncate list in place
+                pipe.ltrim(column, 1, 0)
                 vals = pipe.execute()[0]
                 if len(vals) is 0:
                     avg = 'NaN'

@@ -5,7 +5,7 @@ metadata:
 spec:
   # this replicas value is default
   # modify it according to your case
-  replicas: 3
+  replicas: 12
   template:
     metadata:
       labels:

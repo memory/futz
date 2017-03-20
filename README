@@ -1,0 +1,121 @@
+
+Well, this was fun!  Of the three main moving pieces here (redis, gke,
+zookeeper), this is my first time ever touching two of them (redis, gke) at all
+and my first time writing ZK client code.  So a voyage of discovery all around:
+if the usage of redis seems naive it's because it was, and if a lot of the
+k8s/gke configuration looks to be lightly edited boilerplate from the
+gke tutorials, that's because they were. :)
+
+The primary moving pieces here:
+
+- two redis servers; one for the even keys and one set for the odd keys
+
+- a tiny Flask-Restplus app that takes GET on /ingest (note: not /;
+  flask-restplus REALLY wants to put the swagger endpoint on / and you
+  really don't want to read the boilerplate necessary to change that) derives
+  the arrival time, and does LPUSH <second> <milliseconds> on the appropriate
+  redis cluster.
+
+- a somewhat larger python consumer script that uses zookeeper to determine
+  how many clients are running at any given time and derives a work assignment
+  from its place in the pool
+
+- a zookeeper server for the consumer script to talk to
+
+Built containers of the server and client are available on the public docker
+hub as memory/futz-server and memory/futz-client respectively.  You should
+be able to bring up all of the k8s RCs and Services with kubectl and the
+included yaml files in the project root.
+
+With 12 server pods running, `ab` reported throughput:
+
+    Requests per second:    75.10 [#/sec] (mean)
+    Time per request:       133.159 [ms] (mean)
+    Time per request:       13.316 [ms] (mean, across all concurrent requests)
+    Transfer rate:          16.88 [Kbytes/sec] received
+
+Expected failure modes:
+
+1. intake server death
+
+   Assuming the GKE load balancer is round-robining fairly, this setup should
+   be reasonably robust against the loss of intake pods.  At any given second,
+   we will only be LPUSHing values to one column on one redis server (current
+   clock second; even or odd).  Intake queries are idempotent; you should lose
+   at worst the in-flight queries on the terminated pods.  (Since we're deriving
+   the values to be pushed to redis from the time of the connection rather than
+   data provided by the client, there's nothing to be gained from client retries.)
+
+2. consumer script death
+
+   Worst case scenario: death after we truncate a column (LTRIM) but before
+   we compute and log the average.  That'll mean a gap in the output for the
+   columns that the consumer was working on.  How _long_ a gap depends on how
+   rudely we were interrupted: if we managed to call the atexit handler, we'll
+   gracefully exit the ZK party and at the next alarm the other workers will
+   recompute the workload.  A SIGKILL or a power outage will mean that the
+   columns assigned to me for work would remain unworked until zookeeper
+   expired my membership in the party; my observation when testing was that
+   this usually meant a gap of 3-5 seconds.
+
+3. Redis server death
+
+   The intake server currently does an exponential backoff of up to 6 seconds
+   per query if redis.LPUSH generates an exception.  But, sadly, GKE seems to
+   take somewhere around 35 seconds to fully restart the redis pod if it is
+   killed manually -- so there will definitely be a window of 23ish seconds
+   during which all intake to that server will be dropped.  (But of course
+   half of those queries will to to the other master, so we'll only lose 12ish
+   seconds of data.)  And of course any undigested data (at most 1s?) will
+   be lost to the consumers.
+
+   Obviously we could expand the backoff time period to cover the potential
+   time of a redis outage, at the cost of tying up resources on the intake
+   servers.  Easy enough to do for testing, but often the sort of thing that
+   leads to hilarious cascading failures (memory exhaustion, FD exhaustion,
+   etc) in production.
+
+   The consumer script will throw an exception and exit if the connection to
+   the redis server is interrupted (or indeed if any redis action generates an
+   exception). My (possibly naive) understanding of how redis pipeline
+   transactions work suggests that this should involve no redis-side data loss:
+   if an error is generated during the transaction then the transaction then
+   it should be rolled back? But of course there will be gaps in the log
+   output.
+
+General design thoughts/caveats:
+
+- python/flask/flask-restplus is obviously not what one would generally call a
+  high performance stack.  (GIL; python threads are not real threads, etc)
+  Golang, java or c++ would all probably be more appropriate for a
+  high-throughput system.  At a minimum, a multiprocesing python wrapper such as
+  gunicorn would allow better throughput on multicore machines.
+
+- and, er, there was really no reason to use the flask-restplus extension
+  at all other than just habit -- this could easily be pure Flask.
+
+- on a similar note, the consumer script is currently single-threaded and has
+  to iterate over each of its targets sequentially.  Fetching and computing
+  in parallel (ideally spread across multiple redis replicas) would be the
+  next obvious step here.  (Same caveats about python threading mentioned
+  above apply.)
+
+- obviously a ZK cluster of one instance is not a cluster at all but a MTBF
+  countdown timer.  Figuring out how to gracefully run a three-node zookeeper
+  quorum inside GKE struck me as a little out of scope for this exercise;
+  suffice it to say that if we had been running in AWS I would have set up
+  an Exhibitor deployment (with client discover via EC2 tags) and it looks
+  like there's GKE support for it as well these days:
+  https://cloudplatform.googleblog.com/2016/04/taming-the-herd-using-Zookeeper-and-Exhibitor-on-Google-Container-Engine.html
+
+- And since there wasn't a real ZK cluster, implementing failover logic
+  in the consumer script is a big TODO although I got as far as writing
+  the skeleton of a callback class for state changes.
+
+- For the purposes of this exercise I punted on setting up redis replicaton;
+  obviously some additional resiliancy for the consumer could be achieved by
+  having a replication controller of 2 or more replicas behind a service LB.
+  My gloss on the redis documentation was that losing a master would 
+  necessarily involve a full resynchonization of the slaves when a new master
+  was created and therefore potentially further data loss from the consumer
+  POV, but possibly I did not understand that well.
