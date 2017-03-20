@@ -6,6 +6,7 @@ from flask_restplus import Resource, Api
 import redis
 
 import datetime
+import os
 
 app = Flask(__name__)
 api = Api(app)
@@ -32,4 +33,6 @@ class Ingest(Resource):
                 'we watch': 'and we are always there'}
 
 if __name__ == '__main__':
-    app.run(debug=True, threaded=True)
+    app.run(debug=os.environ.get('DEBUG', False),
+            port=os.environ.get('PORT', 8080),
+            threaded=True)
