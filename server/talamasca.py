@@ -52,6 +52,9 @@ class Ingest(Resource):
         else:
             parity = 'even'
         backoff(REDIS[parity].lpush, sec, ms)
+        elapsed = datetime.datetime.utcnow() - now
+        app.logger.error('pushed to %s in %s ms',
+                         parity, elapsed.total_seconds() * 1000)
         return {'parity': parity,
                 'sec': sec,
                 'ms': ms,

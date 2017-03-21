@@ -2,6 +2,7 @@
 
 # stdlib imports
 import atexit
+import datetime
 import itertools
 import logging
 import signal
@@ -120,7 +121,10 @@ def get_work(party_size, my_position):
 
 def compute_averages(targets):
     for server in (0, 1):
-        for column in [x[1] for x in targets if x[0] == server]:
+        begun = datetime.datetime.utcnow()
+        v_count = 0
+        # note: list of targets is prefiltered in get_work
+        for c_count, column in enumerate(targets):
             with REDIS[server].pipeline(transaction=True) as pipe:
                 # grab all values
                 pipe.lrange(column, 0, -1)
@@ -131,8 +135,12 @@ def compute_averages(targets):
                     avg = 'NaN'
                 else:
                     avg = sum([float(x) for x in vals]) / len(vals)
+                    v_count = v_count + len(vals)
                 logging.info('average ms for server %s, list %s: %s',
                              server, column, avg)
+        elapsed = datetime.datetime.utcnow() - begun
+        logging.info('assayed %d keys and %d values on server %d in %f ms',
+                     c_count, v_count, server, elapsed.total_seconds * 1000.0)
 
 
 def summarize_me(signum, frame):
